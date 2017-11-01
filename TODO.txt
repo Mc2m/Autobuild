@@ -1,0 +1,12 @@
+- use make for Linux
+- run setup for Linux
+- support powershell
+- offer to install missing tools
+- interpret visual studio files
+- parallel build
+- fix pdb file naming/combine pdb files
+- multifolder obj file link
+- check for infering build folders (intermediate and lib)
+- schematise build structure
+- discover visual studio file
+- proper xml parsing

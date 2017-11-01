@@ -18,10 +18,53 @@ usage() {
 #	Handle build errors
 #
 errorHandler() {
+	echo "error on line $(caller)"
 	echo "*******************************************************"
-	echo "*** ${OPERATION} FAILED -- Please check the error messages ***"
+	echo "*** ${ABOP} FAILED -- Please check the error messages ***"
 	echo "*******************************************************"
+	
+	read -n1 -r -p "Press a key to continue..." key
 	exit 1
+}
+
+#
+#
+#
+#
+fixPath() {
+	if [ -f "$1" ]; then echo "$1"; return 0; fi
+
+	local LEN=${#1}-1
+
+	if [ "${1:LEN}" != "/" ]; then
+		echo "${1}/"
+	else
+		echo "$1"
+	fi
+}
+
+#
+#
+#
+#
+unixToWinPath() {
+	if [ "${1:0:1}" == "/" ]; then
+		local newPath="${1:1:1}:${1:2}"
+		echo "${newPath//\//\\}"
+	else
+		echo "${1//\//\\}"
+	fi
+}
+
+#
+#
+#
+#
+trim() {
+    local var="$*"
+    var="${var#"${var%%[![:space:]]*}"}"
+    var="${var%"${var##*[![:space:]]}"}"
+    echo -n "$var"
 }
 
 #
@@ -31,7 +74,7 @@ errorHandler() {
 relativeToAbsolute() {
 	if [[ "$1" = /* ]]; then echo "$1"; fi
 	
-	echo "${PWD}/$1"
+	echo "${ABCWD}/$1"
 }
 
 #
@@ -58,7 +101,7 @@ detectOS() {
 	fi
 
 	if [[ "$OSTYPE" == "linux-gnu" ]]; then
-		echo "LINUX Linux${MACHINE_TYPE}"
+		echo "LINUX Linux ${MACHINE_TYPE}"
 	elif [[ "$OSTYPE" == "darwin"* ]]; then
 		echo "MACOS MacOS ${MACHINE_TYPE}"
 	elif [[ "$OSTYPE" == "cygwin" ]]; then
@@ -75,6 +118,109 @@ detectOS() {
 }
 
 #
+#	pushVSPathToFront
+#	pushes paths belonging to visual studio to the front
+#
+pushVSPathToFront() {
+	local NEWPATH=""
+	local VSPATHS=""
+	IFS=$':'
+	for p in $PATH; do
+		if [ -z "$NEWPATH" ]; then
+			NEWPATH="$p"
+		elif [[ "$p" == *"Visual Studio"* ]]; then
+			if [ -z "$VSPATHS" ]; then
+				VSPATHS="$p"
+			else
+				VSPATHS="${VSPATHS}:${p}"
+			fi
+		else
+			NEWPATH="$NEWPATH:${p}"
+		fi
+	done
+	unset IFS
+	echo "${VSPATHS}:${NEWPATH}"
+}
+
+#
+#	isSDKDefinitionRequired
+#	check for windows if we need _USING_V_SDK71_ special definition
+#
+isSDKDefinitionRequired() {
+	if [[ -z "${LIB:=foo}" ]]; then
+		if [[ "$LIB" == *"v7.1A"*  ]]; then
+			if [[ "$LIB" == *"Visual Studio 14"*  ]]; then
+				echo "1"
+				return
+			elif [[ "$LIB" == *"Visual Studio 12"*  ]]; then
+				echo "1"
+				return
+			elif [[ "$LIB" == *"Visual Studio 12"*  ]]; then
+				echo "1"
+				return
+			fi
+		fi
+	fi
+	echo "0"
+}
+
+#
+#	find build architecture
+#	find which build architecture is used
+#
+findBuildArch() {
+	if [[ "${ABPLATFORM[1]}" == "WINDOWS" ]]; then
+		IFS=$':'
+		for p in $PATH; do
+			if [[ "$p" == *"Visual Studio"*"bin"* ]]; then
+				if [[ "$p" == *"64"* ]]; then
+					echo "x86_64"
+				else
+					echo "x86"
+				fi
+				break
+			fi
+		done
+		unset IFS
+	else
+		echo "${ABPLATFORM[2]}"
+	fi
+}
+
+#
+# returns the current directory
+#
+currentDir() {
+	if [ "$ABPLATFORM" = "CYGWIN" ]; then
+		echo "${PWD:10:1}:${PWD:11}"
+	else
+		echo ${PWD}
+	fi
+}
+
+#
+#   run
+#   run autobuild process
+#
+run() {
+	echo
+	echo "*******************************"
+	echo "*** ${ABOP} Operation Started ***"
+	echo "*******************************"
+	echo
+
+	# build
+	. $ABSCRIPT
+	if [ $ABBUILDFAILED ]; then false; fi
+
+	echo
+	echo "*********************************"
+	echo "*** ${ABOP} Operation Completed ***"
+	echo "*********************************"
+	echo
+}
+
+#
 #	autoBuild 
 #	main Function
 #
@@ -83,25 +229,25 @@ autoBuild() {
 	# autobuild switches
 	#
 	
-	export DEBUG=""
-	export STATIC=""
-	export CLEAN=""
-	
+	ABDEBUG=""
+	ABSTATIC=""
+	ABCLEAN=""
 	
 	#
 	# Check inputs
 	#
 	local OPTIND=1
+	OPTARG=""
 	while getopts ":cds" opt; do
 	  case $opt in
 		c)
-		  CLEAN=1
+		  ABCLEAN=1
 		  ;;
 		d)
-		  DEBUG=1
+		  ABDEBUG=1
 		  ;;
 		s)
-		  STATIC=1
+		  ABSTATIC=1
 		  ;;
 		*)
 		  usage
@@ -121,50 +267,66 @@ autoBuild() {
 	# autobuild parameters
 	#
 	
-	export SCRIPT=$(relativeToAbsolute $1)
-	export BINPATH=$(relativeToAbsolute $2)
-	export LIBPATH=$(relativeToAbsolute $3)
-	export INTPATH=$(relativeToAbsolute $4)
+	ABPLATFORM=($(detectOS))
 	
-	export ABPATH=$(pathDir $0)
-	export SCPATH=$(pathDir $SCRIPT)
-	export PLATFORM=($(detectOS))
+	ABARCH=$(findBuildArch)
 	
-	export BUILDFAILED=""
-	local OPERATION=""
-	if [ $CLEAN ]; then
-		OPERATION="Clean"
+	ABCWD=$(currentDir)
+	
+	ABSCRIPT=$(relativeToAbsolute $(fixPath $1))
+	ABBINPATH=$(relativeToAbsolute $(fixPath $2))
+	ABLIBPATH=$(relativeToAbsolute $(fixPath $3))
+	ABINTPATH=$(relativeToAbsolute $(fixPath $4))
+	
+	ABPATH=$(pathDir $0)
+	ABSCPATH=$(pathDir $ABSCRIPT)
+	
+	ABBUILDFAILED=""
+	
+	ABSDK71="0"
+	
+	local ABOP=""
+	if [ $ABCLEAN ]; then
+		ABOP="Clean"
 	else
-		OPERATION="Build"
+		ABOP="Build"
 		
 		#ensure that output folder have been created
-		mkdir -p "$BINPATH"
-		mkdir -p "$LIBPATH"
-		mkdir -p "$INTPATH"
+		mkdir -p "$ABBINPATH"
+		mkdir -p "$ABLIBPATH"
+		mkdir -p "$ABINTPATH"
+	fi
+	
+	#
+	# windows need special things
+	#
+	if [[ "${ABPLATFORM[1]}" == "WINDOWS" ]]; then
+		#
+		# fix path
+		#
+		PATH=$(pushVSPathToFront)
+		
+		#
+		# check for SDK7.1
+		#
+		ABSDK71=$(isSDKDefinitionRequired)
+		
+		ABBINPATH=$(unixToWinPath $ABBINPATH)
+		ABLIBPATH=$(unixToWinPath $ABLIBPATH)
+		ABINTPATH=$(unixToWinPath $ABINTPATH)
 	fi
 	
 	#
 	# load build tool
 	#
 	. ${ABPATH}contrib_build.sh
-	
-	autobuildReset
-	
-	echo
-	echo "*******************************"
-	echo "*** ${OPERATION} Operation Started ***"
-	echo "*******************************"
-	echo
+	. ${ABPATH}vsparser.sh
 
-	# build
-	. $SCRIPT
-	if [ $BUILDFAILED ]; then false; fi
+	if [ -z $ABCLEAN ]; then autobuildCustomSetup; fi
 
-	echo
-	echo "*********************************"
-	echo "*** ${OPERATION} Operation Completed ***"
-	echo "*********************************"
-	echo
+	run 2>&1 | tee ${ABINTPATH}autobuild.log
+
+	set ERRORLEVEL=0
 }
 
 #

@@ -10,30 +10,55 @@
 #	setup informations needed for the build
 #
 
-export COMPILER=""
-export LINKER=""
-export LINKERDEFOPTS=""
+ABCOMPILER=""
+ABASMCOMPILER=""
+ABLINKER=""
+ABLINKERDEFOPTS=""
+ABCUSTOMBUILD=""
+
+ABPROJNAME=""
+ABFOLDER=""
+ABLABELNAME=""
+ABVISUALSTUDIOFILE=""
+ABCOMPILEOPTS=""
+ABPREPROCDEF=""
+ABPCH=""
+ABPCHSRC=""
+ABSRCS=""
+ABASMSRCS=""
+ABLIBOPTS=""
+ABDLLOPTS=""
+ABPREBUILDEVENT=""
+ABBUILDEVENT=""
+ABPOSTBUILDEVENT=""
+ABCLEANEVENT=""
+ABCUSTOMCOMMAND=""
 
 #
 #	autobuildReset 
 #	reset Build options
 #
 autobuildReset() {
-	CUSTOMBUILD=""
-	PROJNAME=""
-	FOLDER=""
-	LABELNAME=""
-	COMPILEOPTS=""
-	PREPROCDEF=""
-	PCH=""
-	PCHSRC=""
-	SRCS=""
-	LIBOPTS=""
-	DLLOPTS=""
-	PREBUILDEVENT=""
-	BUILDEVENT=""
-	POSTBUILDEVENT=""
-	CLEANEVENT=""
+	ABCUSTOMBUILD=""
+	
+	ABPROJNAME=""
+	ABFOLDER=""
+	ABLABELNAME=""
+	ABVISUALSTUDIOFILE=""
+	ABCOMPILEOPTS=""
+	ABPREPROCDEF=""
+	ABPCH=""
+	ABPCHSRC=""
+	ABSRCS=""
+	ABASMSRCS=""
+	ABINCLUDEDIRS=""
+	ABLIBOPTS=""
+	ABDLLOPTS=""
+	ABPREBUILDEVENT=""
+	ABBUILDEVENT=""
+	ABPOSTBUILDEVENT=""
+	ABCLEANEVENT=""
+	ABCUSTOMCOMMAND=""
 }
 
 #
@@ -41,20 +66,24 @@ autobuildReset() {
 #	Setup information for custom build
 #
 autobuildCustomSetup() {
-	if [ -z "$VISUALSTUDIOVERSION" ]; then
+	if [ -z ${INCLUDE+x} ]; then
 		echo "You are running this bash script using MSYS but visual studio is missing."
 		echo "You must open a \"Visual Studio .NET Command Prompt\" to run this script."
 		return 1
 	fi
 	
-	#set the compiler and linker
-	COMPILER="cl"
-	if [ $STATIC ]; then
-		LINKER="lib"
-		LINKERDEFOPTS=" /nologo /nodefaultlib"
+	#set the ABCOMPILER and ABLINKER
+	ABCOMPILER="cl"
+	ABASMCOMPILER="ml"
+	ABASMDEFOPT="//nologo //Zi //c"
+	ABASMPOSTOPT="/Fl\"\" //W3"
+	ABLOCALCOMPILEOPT="//c //nologo"
+	if [ $ABSTATIC ]; then
+		ABLINKER="lib"
+		ABLINKERDEFOPTS=" //nologo //nodefaultlib"
 	else
-		LINKER="link"
-		LINKERDEFOPTS=" /nologo /DLL"
+		ABLINKER="link"
+		ABLINKERDEFOPTS=" //nologo //DLL"
 	fi
 }
 
@@ -63,8 +92,50 @@ autobuildCustomSetup() {
 #	Fix an issue with MSYS
 #
 autobuildFixAutoPathing() {
-	PREPROCDEF=" ${PREPROCDEF}"
-	COMPILEOPTS=" ${COMPILEOPTS}"
+	ABPREPROCDEF=" ${ABPREPROCDEF}"
+	ABCOMPILEOPTS=" ${ABCOMPILEOPTS}"
+}
+
+#
+#	autobuildRunEvent 
+#	Run an event and check for errors
+#
+autobuildRunEvent() {
+	eval $1	
+	if [ $ABBUILDFAILED ]; then exit 1; fi
+}
+
+ABBuildInternal() {
+	if [ -n "$ABCUSTOMCOMMAND" ]; then
+		echo $ABCUSTOMCOMMAND
+		cmd //c "$ABCUSTOMCOMMAND"
+	fi
+
+	if [ -n "$ABASMSRCS" ]; then
+		for file in $ABASMSRCS; do
+			${ABASMCOMPILER} $ABASMDEFOPT /Fo"${ABINTPATH}" ${file} $ABASMPOSTOPT
+		done
+	fi
+	
+	ABCOMPILEOPTS=${ABCOMPILEOPTS//\////}
+	ABPREPROCDEF=${ABPREPROCDEF//\////}
+	
+	local path="$(unixToWinPath $PWD)\\"
+	ABINCLUDEDIRS="${ABINCLUDEDIRS//\//\\}"
+	ABINCLUDEDIRS="//I $path${ABINCLUDEDIRS// / //I $path}"
+	
+	if [ -n "$ABPCH" ]; then
+		$ABCOMPILER $ABLOCALCOMPILEOPT /Fo${ABINTPATH} /Fd${ABINTPATH} $ABCOMPILEOPTS $ABINCLUDEDIRS $ABPREPROCDEF $ABPCHSRC //Yc$ABPCH /Fp$ABINTPATH$ABPROJNAME.pch
+		ABCOMPILEOPTS="$ABCOMPILEOPTS //Yu$ABPCH /Fp$ABINTPATH$ABPROJNAME.pch"
+	fi
+
+	$ABCOMPILER $ABLOCALCOMPILEOPT /Fo${ABINTPATH} /Fd${ABINTPATH} $ABCOMPILEOPTS $ABINCLUDEDIRS $ABPREPROCDEF $ABSRCS
+	
+	if [ $ABSTATIC == 1 ]; then
+		$ABLINKER $ABLINKERDEFOPTS /OUT:$ABLIBPATH$ABLIBNAME $ABINTPATH*.obj $ABLIBOPTS
+	else
+		$ABLINKER $ABLINKERDEFOPTS /OUT:$ABBINPATH$ABDLLNAME $ABINTPATH*.obj $ABDLLOPTS
+	fi
 }
 
 #
@@ -72,18 +143,54 @@ autobuildFixAutoPathing() {
 #	Custom build using msvc
 #
 autobuildCustomMSVC() {
-	if [ ! $COMPILER ]; then autobuildCustomSetup; fi
+	if [ ! $ABCOMPILER ]; then autobuildCustomSetup; fi
 	
 	(
 		#pre-build event
-		eval $PREBUILDEVENT
-
-		#build event
-		eval ${BUILDEVENT}
+		autobuildRunEvent "$ABPREBUILDEVENT"
 		
+		#build event
+		if [ -z "$ABBUILDEVENT" ]; then
+			ABBuildInternal
+		else
+			autobuildRunEvent "$ABBUILDEVENT"
+		fi
+
 		#post-build event
-		eval $POSTBUILDEVENT
+		autobuildRunEvent "$ABPOSTBUILDEVENT"
 	)
+}
+
+#
+#	ABCheckModifiedFile 
+#	Compare library file date to files in path
+#
+ABCheckModifiedFile() {
+	local reference=""
+	local folder="${ABSCPATH}${ABFOLDER}"
+	
+	if [ -z "$ABSRCS" ]; then
+		folder=${folder}*
+	else
+		folder=${folder}$ABSRCS
+	fi
+
+	if [ $ABSTATIC ]; then
+		reference="${ABLIBPATH}${ABLIBNAME}"
+	else
+		reference="${ABBINPATH}${ABDLLNAME}"
+	fi
+	
+	for entry in $folder; do
+		if [ -f "$entry" ]; then
+			if [ "$reference" -ot "$entry" ]; then
+				echo "1"
+				return
+			fi
+		fi
+	done
+
+	echo "0"
 }
 
 #
@@ -91,28 +198,36 @@ autobuildCustomMSVC() {
 #	build function
 #
 autobuildBuild() {
-	if [ $BUILDFAILED ]; then return 0; fi
+	if [ $ABBUILDFAILED ]; then return 0; fi
 	
-	export LIBNAME="${PROJNAME}.lib"
-	export DLLNAME="${PROJNAME}.dll"
+	ABLIBNAME="${ABPROJNAME}.lib"
+	ABDLLNAME="${ABPROJNAME}.dll"
 
-	if [ ! $CLEAN ]; then
-		if [ $STATIC ] && [ -f "${LIBPATH}${LIBNAME}" ]; then
-			echo "Nothing to do for ${LABELNAME}"
-		elif [ $STATIC ] && [ -f "${LIBPATH}${LIBNAME}" ] && [ -f "${BINPATH}${DLLNAME}" ]; then
-			echo "Nothing to do for ${LABELNAME}"
-		else
-			if [ "$PLATFORM" = "MSYS" ]; then
+	if [ ! $ABCLEAN ]; then
+		local build=1
+		
+		if [ $ABSTATIC ] && [ -f "${ABLIBPATH}${ABLIBNAME}" ]; then
+			build=$(ABCheckModifiedFile)
+		elif [ ! $ABSTATIC ] && [ -f "${ABLIBPATH}${ABLIBNAME}" ] && [ -f "${ABBINPATH}${ABDLLNAME}" ]; then
+			build=$(ABCheckModifiedFile)
+		fi
+		
+		if [ $build == 1 ]; then
+			if [ "$ABPLATFORM" = "MSYS" ]; then
+				autobuildCustomMSVC
+			elif [ "$ABPLATFORM" = "CYGWIN" ]; then
 				autobuildCustomMSVC
 			else
 				echo "No compiler tool available for current platform. Aborting..."
 				exit 1
 			fi
+		else
+			echo "Nothing to do for ${ABLABELNAME}"
 		fi
 	else
-		eval $CLEANEVENT
+		eval $ABCLEANEVENT
 	fi
-	
+
 	autobuildReset
 }
 
@@ -122,16 +237,21 @@ autobuildBuild() {
 #
 autobuildPreBuildEvent()
 {
-	echo "=== Building ${LABELNAME} ==="
+	echo "=== Building ${ABLABELNAME} ==="
 	echo ""
 	
 	# create intermediate directory
-	INTPATH="${INTPATH}${PROJNAME}/"
-	mkdir -p "$INTPATH"
+	ABINTPATH="${ABINTPATH}${ABPROJNAME}\\"
+	mkdir -p "$ABINTPATH"
 	
 	autobuildFixAutoPathing
 	
-	cd ${SCPATH}${FOLDER}
+	cd "${ABSCPATH}${ABFOLDER}"
+	
+	if [ -n "$ABVISUALSTUDIOFILE" ]; then
+		cd "${ABSCPATH}${ABFOLDER}$(dirname $ABVISUALSTUDIOFILE)"
+		ABParse "$(basename $ABVISUALSTUDIOFILE)"
+	fi
 }
 
 #
@@ -141,57 +261,61 @@ autobuildPreBuildEvent()
 autobuildPostBuildEvent()
 {
 	echo ""
-	echo "=== Successfully built ${LABELNAME} for ${PLATFORM[1]}/${PLATFORM[2]} ==="
+	echo "=== Successfully built ${ABLABELNAME} for ${ABPLATFORM[1]}/${ABARCH} ==="
 }
 
 #
-#	autobuildPostBuildEvent
-#	Events to execute after building
+#	autobuildCleandEvent
+#	Default cleaning event
 #
 autobuildCleandEvent()
 {
-	echo -n "Cleaning ${LABELNAME}... "
-	rm -r -f "${INTPATH}${PROJNAME}"
-	rm -f "${LIBPATH}${LIBNAME}"
-	rm -f "${BINPATH}${DLLNAME}"
+	echo -n "Cleaning ${ABLABELNAME}... "
+	rm -r -f "${ABINTPATH}${ABPROJNAME}"
+	rm -f "${ABLIBPATH}${ABLIBNAME}"
+	rm -f "${ABBINPATH}${ABDLLNAME}"
 	echo "Done"
 }
 
 #
-#	autobuildDefault 
+#	autobuildCustomBuild 
 #	default building switches
 #
 autobuildCustomBuild() {
-	if [ $BUILDFAILED ]; then return 0; fi
+	if [ $ABBUILDFAILED ]; then return 0; fi
 
-	if [ ! $CLEAN ]; then
-		COMPILEOPTS="$COMPILEOPTS /fp:precise"
-		if [ $DEBUG ]; then
-			if [ $STATIC ]; then
-				COMPILEOPTS="$COMPILEOPTS /MTd"
+	if [ ! $ABCLEAN ]; then
+		ABCOMPILEOPTS="$ABCOMPILEOPTS /c /fp:precise"
+		if [ $ABDEBUG ]; then
+			if [ $ABSTATIC ]; then
+				ABCOMPILEOPTS="$ABCOMPILEOPTS /MTd"
 			else
-				COMPILEOPTS="$COMPILEOPTS /MDd"
+				ABCOMPILEOPTS="$ABCOMPILEOPTS /MDd"
 			fi
 		
-			PREPROCDEF="$PREPROCDEF /D _DEBUG /D DEBUG"
+			ABPREPROCDEF="$ABPREPROCDEF /D _DEBUG /D DEBUG"
 		else
-			if [ $STATIC ]; then
-				COMPILEOPTS="$COMPILEOPTS /MT"
+			if [ $ABSTATIC ]; then
+				ABCOMPILEOPTS="$ABCOMPILEOPTS /MT"
 			else
-				COMPILEOPTS="$COMPILEOPTS /MD"
+				ABCOMPILEOPTS="$ABCOMPILEOPTS /MD"
 			fi
 			
-			PREPROCDEF="$PREPROCDEF /D NDEBUG"
-			LIBOPTS="$LIBOPTS /LTCG"
+			ABPREPROCDEF="$ABPREPROCDEF /D NDEBUG"
+			ABLIBOPTS="$ABLIBOPTS /LTCG"
 		fi
-		if [ ! $PREBUILDEVENT ]; then PREBUILDEVENT="autobuildPreBuildEvent"; fi
-		if [ ! $BUILDEVENT ]; then BUILDEVENT="cmd.exe \/c \"${ABPATH}custom_build.bat\""; fi
-		if [ ! $POSTBUILDEVENT ]; then POSTBUILDEVENT="autobuildPostBuildEvent"; fi
+		
+		if [ ABSDK71 == 1 ]; then
+			ABPREPROCDEF="$ABPREPROCDEF /D _USING_V110_SDK71_"
+		fi
+		
+		if [ ! $ABPREBUILDEVENT ]; then ABPREBUILDEVENT="autobuildPreBuildEvent"; fi
+		if [ ! $ABPOSTBUILDEVENT ]; then ABPOSTBUILDEVENT="autobuildPostBuildEvent"; fi
 	else
-		if [ ! $CLEANEVENT ]; then CLEANEVENT="autobuildCleandEvent"; fi
+		if [ ! $ABCLEANEVENT ]; then ABCLEANEVENT="autobuildCleandEvent"; fi
 	fi
 	
-	CUSTOMBUILD=1
+	ABCUSTOMBUILD=1
 
 	autobuildBuild
 }
