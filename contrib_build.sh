@@ -286,6 +286,11 @@ autobuildCustomBuild() {
 
 	if [ ! $ABCLEAN ]; then
 		ABCOMPILEOPTS="$ABCOMPILEOPTS /c /fp:precise"
+		
+		if [ "${ABPLATFORM[1]}" == "WINDOWS" ]; then
+			ABPREPROCDEF="$ABPREPROCDEF /D _CRT_SECURE_NO_DEPRECATE /D _CRT_NONSTDC_NO_DEPRECATE /D _CRT_SECURE_NO_WARNINGS"
+		fi
+		
 		if [ $ABDEBUG ]; then
 			if [ $ABSTATIC ]; then
 				ABCOMPILEOPTS="$ABCOMPILEOPTS /MTd"
