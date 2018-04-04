@@ -10,3 +10,4 @@
 - schematise build structure
 - discover visual studio file
 - proper xml parsing
+- check compile option changes
